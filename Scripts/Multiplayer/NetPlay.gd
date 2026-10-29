@@ -18,7 +18,7 @@ signal room_closed(reason: String)
 
 const MAX_PLAYERS := 4
 const STATE_HZ := 20.0
-const DEFAULT_SERVER := "ws://127.0.0.1:8080/ws"
+const DEFAULT_SERVER := "wss://smb1r-online-rooms.onrender.com/ws"
 const CONFIG_PATH := "user://multiplayer.cfg"
 const REMOTE_PLAYER_SCRIPT := preload("res://Scripts/Multiplayer/RemotePlayer.gd")
 const STUN_SERVERS := ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]
