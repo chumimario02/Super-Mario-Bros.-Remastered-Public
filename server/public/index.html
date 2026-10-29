@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMB1R Online - Rooms</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px; background: #111; color: #eee; font-family: system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: #999; margin: 0 0 16px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #262626; }
+  th { color: #888; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .code { font-family: ui-monospace, monospace; color: #ffd54a; }
+  .empty { color: #666; padding: 16px 0; }
+</style>
+</head>
+<body>
+<h1>SMB1R Online</h1>
+<p>Room server is online. This page refreshes every 5 seconds.</p>
+<table>
+  <thead>
+    <tr><th>Room</th><th>Level</th><th>Host</th><th>Players</th><th>Status</th></tr>
+  </thead>
+  <tbody id="rooms"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+</table>
+<script>
+async function refresh() {
+  try {
+    const rooms = await (await fetch('/rooms')).json();
+    const body = document.getElementById('rooms');
+    if (!rooms.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No public rooms right now.</td></tr>';
+      return;
+    }
+    body.innerHTML = rooms.map(function (room) {
+      const status = room.started ? 'In game' : 'Lobby';
+      return '<tr><td class="code">' + room.code + '</td><td>' + escapeHtml(room.level) +
+        '</td><td>' + escapeHtml(room.host) + '</td><td>' + room.players + '/' + room.max +
+        '</td><td>' + status + '</td></tr>';
+    }).join('');
+  } catch (error) {
+    document.getElementById('rooms').innerHTML =
+      '<tr><td colspan="5" class="empty">Server unreachable.</td></tr>';
+  }
+}
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

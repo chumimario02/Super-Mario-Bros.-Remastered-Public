@@ -3,6 +3,12 @@
 /android/
 Exports/
 
+# Tooling / test output
+server/node_modules/
+tests/*.log
+tests/*.err
+*.tmp
+
 # GML specific ignores
 /mods
 /mods-unpacked

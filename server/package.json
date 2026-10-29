@@ -1,0 +1,16 @@
+{
+  "name": "smb1r-online-rooms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Room list + WebRTC signalling server for SMB1R Online (custom level co-op).",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

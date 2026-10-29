@@ -13,6 +13,9 @@ static var last_played_container = null
 static var saved_search_values := [-1, -1, -1]
 static var level_id := ""
 
+var mp_menu: MultiplayerMenu
+var _lss_play := false
+
 func _input(event: InputEvent) -> void:
 	if (event is InputEventKey):
 		if get_viewport().gui_get_focus_owner() == null or ($CharacterSelect.visible or $LSSCharacterSelect.visible):
@@ -71,6 +74,11 @@ func _ready() -> void:
 		await get_tree().process_frame
 		%LSSBrowser.grab_levels()
 		%LevelList.close()
+	mp_menu = MultiplayerMenu.new()
+	mp_menu.name = "MultiplayerMenu"
+	add_child(mp_menu)
+	mp_menu.singleplayer_chosen.connect(_start_singleplayer)
+	mp_menu.host_start_requested.connect(_start_host_level)
 	$BGM.play()
 
 func _process(delta: float) -> void:
@@ -116,19 +124,30 @@ func edit_level() -> void:
 func play_level() -> void:
 	Global.current_game_mode = Global.GameMode.CUSTOM_LEVEL
 	LevelEditor.load_play = true
-	$CharacterSelect.open()
-	await $CharacterSelect.selected
+	_lss_play = false
+	mp_menu.open(LevelEditor.level_name)
+
+func _start_singleplayer() -> void:
+	if _lss_play:
+		$LSSCharacterSelect.open()
+		await $LSSCharacterSelect.selected
+	else:
+		$CharacterSelect.open()
+		await $CharacterSelect.selected
 	LevelTransition.level_to_transition_to = ("res://Scenes/Levels/LevelEditor.tscn")
 	Global.transition_to_scene("res://Scenes/Levels/LevelTransition.tscn")
+
+func _start_host_level() -> void:
+	$CharacterSelect.open()
+	await $CharacterSelect.selected
+	NetPlay.start_level()
 
 func online_play() -> void:
 	lss_level_played()
 	Global.current_game_mode = Global.GameMode.CUSTOM_LEVEL
 	LevelEditor.load_play = true
-	$LSSCharacterSelect.open()
-	await $LSSCharacterSelect.selected
-	LevelTransition.level_to_transition_to = ("res://Scenes/Levels/LevelEditor.tscn")
-	Global.transition_to_scene("res://Scenes/Levels/LevelTransition.tscn")
+	_lss_play = true
+	mp_menu.open(LevelEditor.level_name)
 
 func lss_level_played() -> void:
 	last_played_container = %LSSLevelInfo.container_to_play.duplicate()

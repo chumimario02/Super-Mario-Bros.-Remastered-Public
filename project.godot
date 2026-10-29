@@ -43,6 +43,7 @@ AudioManager="*res://Scenes/Prefabs/Autoload/AudioManager.tscn"
 BetterTerrain="*res://addons/better-terrain/BetterTerrain.gd"
 GameBanana="*res://Scripts/Classes/Singletons/GameBananaManager.gd"
 SpeedrunHandler="*res://Scripts/Classes/Singletons/SpeedrunHandler.gd"
+NetPlay="*res://Scripts/Multiplayer/NetPlay.gd"
 
 [debug]
 
