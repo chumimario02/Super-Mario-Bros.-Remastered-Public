@@ -39,6 +39,7 @@ func _enter_tree() -> void:
 func dispense_item() -> void:
 	if can_hit == false:
 		return
+	NetPlay.broadcast_block_hit(self)
 	block_hit.emit()
 	can_hit = false
 	await get_tree().create_timer(0.1, false).timeout

@@ -439,7 +439,7 @@ theme_override_constants/separation = 0
 alignment = 2
 script = ExtResource("9_dsf7o")
 active = true
-options = [NodePath("PlayGame"), NodePath("Settings"), NodePath("Quit Game")]
+options = [NodePath("PlayGame"), NodePath("Settings"), NodePath("Quit Game"), NodePath("Netplay")]
 
 [node name="PlayGame" type="Label" parent="CanvasLayer/Options1" unique_id=14911350]
 layout_mode = 2
@@ -460,6 +460,13 @@ layout_mode = 2
 size_flags_horizontal = 0
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
 text = "MENU_EXTRAS"
+uppercase = true
+
+[node name="Netplay" type="Label" parent="CanvasLayer/Options1" unique_id=1503192612]
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+text = "NETPLAY"
 uppercase = true
 
 [node name="Buffer" type="Control" parent="CanvasLayer/Options1" unique_id=368221137]

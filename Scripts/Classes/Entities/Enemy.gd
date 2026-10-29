@@ -22,6 +22,7 @@ func apply_enemy_gravity(delta: float) -> void:
 	velocity.y = clamp(velocity.y, -INF, Global.entity_max_fall_speed)
 
 func die() -> void:
+	NetPlay.broadcast_enemy_died(self)
 	killed.emit([-1, 1].pick_random())
 	DiscoLevel.combo_amount += 1
 	DiscoLevel.combo_meter = 100
@@ -35,6 +36,7 @@ func bounce_from_object(obj: Node2D) -> void:
 	velocity = Vector2(64, -160)
 
 func die_from_object(obj: Node2D) -> void:
+	NetPlay.broadcast_enemy_died(self)
 	var dir = sign(global_position.x - obj.global_position.x)
 	if dir == 0:
 		dir = [-1, 1].pick_random()
@@ -52,6 +54,7 @@ func flag_die() -> void:
 				score_note_adder.spawn_note(500)
 
 func die_from_hammer(obj: Node2D) -> void:
+	NetPlay.broadcast_enemy_died(self)
 	var dir = sign(global_position.x - obj.global_position.x)
 	if dir == 0:
 		dir = [-1, 1].pick_random()

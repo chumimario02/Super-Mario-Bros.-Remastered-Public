@@ -11,6 +11,7 @@ var peer_id := 0
 var display_name := "PLAYER"
 var character := "Mario"
 var power_state := "Small"
+var reference: Player = null
 
 var _sprite: AnimatedSprite2D
 var _name_label: Label
@@ -90,10 +91,20 @@ func apply_state(data: Dictionary) -> void:
 			_sprite.animation = anim
 		_sprite.frame = int(data.get("f", 0))
 
-
 func _refresh_sprite(force_load: bool) -> void:
 	if _sprite == null:
 		return
+	# PlayerSprite indexes Player.POWER_STATES with int(force_power_state), so we
+	# have to hand it the numeric index ("1" for Big), not the name.
+	var power_index := Player.POWER_STATES.find(power_state)
+	if power_index < 0:
+		power_index = 0
 	_sprite.force_character = character
-	_sprite.force_power_state = power_state
+	_sprite.force_power_state = str(power_index)
 	_sprite.update()
+	# PlayerSprite computes its own offset from the texture height, which does
+	# not match how the real player is drawn. Copy the local player's transform
+	# so the puppet stands exactly where it should.
+	if reference != null and is_instance_valid(reference) and reference.sprite != null:
+		_sprite.position = reference.sprite.position
+		_sprite.offset = reference.sprite.offset

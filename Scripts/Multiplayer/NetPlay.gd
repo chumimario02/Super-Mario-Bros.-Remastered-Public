@@ -45,6 +45,11 @@ var level_file := {}
 var level_hash := ""
 var level_name := ""
 var level_author := "PLAYER"
+## "custom" (.lvl dictionary) or "campaign" (SMB1 / SMBS / SMBLL / SMBANN).
+var level_mode := "custom"
+var campaign_id := "SMB1"
+var campaign_world := 1
+var campaign_level := 1
 
 var _ws: WebSocketPeer = null
 var _ws_opened := false
@@ -57,10 +62,15 @@ var _remote_desc := {}
 var _candidates := {}
 
 var _puppets := {}
+var _puppet_parent: Node = null
 var _local_player: Player = null
 var _current_level: Level = null
 var _send_accum := 0.0
 var _hello_sent := false
+var _entity_cache := {}
+var _entity_cache_root: Node = null
+## True while applying an event that came from another peer (prevents echo loops).
+var _applying_remote := false
 ## Test helper: skips the "press a button" wait on the level transition screen.
 var _auto_advance := false
 var _simple_level := false
@@ -171,14 +181,44 @@ func shutdown() -> void:
 func start_level() -> void:
 	if not is_host:
 		return
+	if level_mode == "campaign":
+		start_campaign(campaign_id, campaign_world, campaign_level)
+		return
 	if not level_active:
 		capture_level()
 	rpc("net_start_level", level_file, _level_meta())
 	_enter_level_scene()
 
 
+## Host: start a campaign (SMB1 / SMBS / SMBLL / SMBANN) level for the room.
+func start_campaign(campaign: String, world: int, level: int) -> void:
+	level_mode = "campaign"
+	campaign_id = campaign
+	campaign_world = max(1, world)
+	campaign_level = max(1, level)
+	level_hash = "campaign:%s:%d:%d" % [campaign_id, campaign_world, campaign_level]
+	level_name = "%s %d-%d" % [campaign_id, campaign_world, campaign_level]
+	level_active = true
+	rpc("net_start_campaign", campaign_id, campaign_world, campaign_level)
+	_enter_campaign_level()
+
+
+func _enter_campaign_level() -> void:
+	level_started.emit()
+	Global.current_campaign = campaign_id
+	Global.level_num = campaign_level
+	Global.world_num = campaign_world
+	Global.current_game_mode = Global.GameMode.CAMPAIGN
+	Global.current_custom_campaign = ""
+	Level.first_load = true
+	Level.can_set_time = true
+	var path := Level.get_scene_string(campaign_world, campaign_level)
+	Global.transition_to_scene(path)
+
+
 ## Grab the level the menu is currently pointing at.
 func capture_level() -> void:
+	level_mode = "custom"
 	level_file = LevelEditor.level_file.duplicate(true)
 	level_name = LevelEditor.level_name
 	level_author = LevelEditor.level_author
@@ -193,7 +233,7 @@ func capture_level() -> void:
 ## Called by Level.spawn_in_extra_players() as soon as a level scene starts.
 func on_level_entered(level: Level) -> void:
 	_current_level = level
-	_puppets.clear()
+	_clear_puppets()
 	_local_player = null
 
 
@@ -203,14 +243,25 @@ func on_level_entered(level: Level) -> void:
 func _watch_level(delta: float) -> void:
 	if not is_playing_online():
 		return
-	var level: Level = Global.current_level
-	if level == null or not is_instance_valid(level):
+	var current = Global.current_level
+	if current == null or not is_instance_valid(current):
+		return
+	var level := current as Level
+	if level == null:
 		return
 	if level == _current_level:
+		if _local_player != null and not is_instance_valid(_local_player):
+			_clear_puppets()
+			_local_player = null
 		return
 	_current_level = level
-	_puppets.clear()
+	_clear_puppets()
+	_puppet_parent = null
 	_local_player = null
+	# Speedrun ghosts look like extra players online, so keep them off.
+	SpeedrunHandler.ghost_active = false
+	SpeedrunHandler.ghost_enabled = false
+	get_tree().call_group("PlayerGhosts", "delete")
 	print("[NetPlay] level detected (players=%d)" % get_tree().get_nodes_in_group("Players").size())
 
 
@@ -353,7 +404,15 @@ func _handle_server_message(msg: Dictionary) -> void:
 
 
 func _on_room_joined(msg: Dictionary) -> void:
+	var keep_mode := level_mode
+	var keep_campaign := campaign_id
+	var keep_world := campaign_world
+	var keep_level := campaign_level
 	_clear_session()
+	level_mode = keep_mode
+	campaign_id = keep_campaign
+	campaign_world = keep_world
+	campaign_level = keep_level
 	mode = Mode.IN_ROOM
 	my_id = int(msg.get("id", 1))
 	is_host = my_id == 1
@@ -379,6 +438,7 @@ func _on_room_joined(msg: Dictionary) -> void:
 
 func _clear_session() -> void:
 	level_active = false
+	level_mode = "custom"
 	level_file = {}
 	level_hash = ""
 	level_name = ""
@@ -542,6 +602,93 @@ func net_request_level() -> void:
 	rpc_id(multiplayer.get_remote_sender_id(), "net_start_level", level_file, _level_meta())
 
 
+# --------------------------------------------------------------------------
+# World events (blocks, enemies)
+# --------------------------------------------------------------------------
+
+## Stable id for a level entity. Every peer builds the same level file, so the
+## tile position + layer identify the same node on every machine.
+func entity_id(node: Node) -> String:
+	if node == null or not is_instance_valid(node):
+		return ""
+	if not node.has_meta("tile_position") or not node.has_meta("layer"):
+		return ""
+	var tile: Vector2i = node.get_meta("tile_position")
+	return "%d:%d:%d" % [int(node.get_meta("layer")), tile.x, tile.y]
+
+
+func broadcast_block_hit(block: Node) -> void:
+	if not is_playing_online() or _applying_remote:
+		return
+	var id := entity_id(block)
+	if id == "":
+		return
+	rpc("net_block_hit", id, _room_key())
+
+
+func broadcast_enemy_died(enemy: Node) -> void:
+	if not is_playing_online() or _applying_remote:
+		return
+	var id := entity_id(enemy)
+	if id == "":
+		return
+	rpc("net_enemy_died", id, _room_key())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_block_hit(id: String, room: String) -> void:
+	if not level_active or room != _room_key():
+		return
+	var node := _find_entity(id)
+	if node == null or not node.has_method("dispense_item"):
+		return
+	_applying_remote = true
+	node.call("dispense_item")
+	_applying_remote = false
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_enemy_died(id: String, room: String) -> void:
+	if not level_active or room != _room_key():
+		return
+	var node := _find_entity(id)
+	if node == null or not is_instance_valid(node):
+		return
+	if node.has_method("die"):
+		_applying_remote = true
+		node.call("die")
+		_applying_remote = false
+
+
+func _find_entity(id: String) -> Node:
+	var root := _scene_root()
+	if root == null:
+		return null
+	if _entity_cache_root != root:
+		_entity_cache_root = root
+		_entity_cache.clear()
+		var stack: Array[Node] = [root]
+		while stack.size() > 0:
+			var current: Node = stack.pop_back()
+			var key := entity_id(current)
+			if key != "":
+				_entity_cache[key] = current
+			for child in current.get_children():
+				stack.append(child)
+	var found = _entity_cache.get(id)
+	if found != null and is_instance_valid(found):
+		return found
+	_entity_cache.erase(id)
+	return null
+
+
+func _scene_root() -> Node:
+	if _current_level == null or not is_instance_valid(_current_level):
+		return null
+	var parent := _current_level.get_parent()
+	return parent if parent != null else _current_level
+
+
 @rpc("authority", "call_remote", "reliable")
 func net_start_level(remote_level: Dictionary, meta: Dictionary) -> void:
 	if remote_level.is_empty():
@@ -555,6 +702,21 @@ func net_start_level(remote_level: Dictionary, meta: Dictionary) -> void:
 	level_hash = new_hash
 	level_active = true
 	_enter_level_scene()
+
+
+@rpc("authority", "call_remote", "reliable")
+func net_start_campaign(campaign: String, world: int, level: int) -> void:
+	var new_hash := "campaign:%s:%d:%d" % [campaign, world, level]
+	if level_active and level_hash == new_hash:
+		return
+	level_mode = "campaign"
+	campaign_id = campaign
+	campaign_world = world
+	campaign_level = level
+	level_hash = new_hash
+	level_name = "%s %d-%d" % [campaign, world, level]
+	level_active = true
+	_enter_campaign_level()
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered")
@@ -616,7 +778,9 @@ func _send_local_state(delta: float) -> void:
 func _room_key() -> String:
 	if Global.current_level == null or not is_instance_valid(Global.current_level):
 		return ""
-	var level: Level = Global.current_level
+	var level := Global.current_level as Level
+	if level == null:
+		return ""
 	var parent: Node = level.get_parent()
 	if parent != null and parent.get("sublevel_id") != null:
 		return "%s:%s" % [str(level.room_type), str(parent.sublevel_id)]
@@ -628,6 +792,12 @@ func _room_key() -> String:
 # --------------------------------------------------------------------------
 
 func _spawn_puppet(peer_id: int):
+	for id in _puppets.keys():
+		if not peers_info.has(int(id)):
+			_remove_puppet(int(id))
+	var existing = _puppets.get(peer_id)
+	if existing != null and is_instance_valid(existing):
+		return existing
 	if not is_instance_valid(_local_player):
 		_local_player = get_tree().get_first_node_in_group("Players") as Player
 	if not is_instance_valid(_local_player):
@@ -635,13 +805,26 @@ func _spawn_puppet(peer_id: int):
 	var parent := _local_player.get_parent()
 	if parent == null:
 		return null
+	if parent != _puppet_parent:
+		_clear_puppets()
+		_puppet_parent = parent
+	_remove_stray_puppets(parent)
 	var node = REMOTE_PLAYER_SCRIPT.new()
 	node.name = "Remote_" + str(peer_id)
 	parent.add_child(node)
+	node.reference = _local_player
 	node.setup(peer_id, str(peers_info.get(peer_id, {}).get("name", "PLAYER")))
 	node.z_index = _local_player.z_index
 	_puppets[peer_id] = node
 	return node
+
+
+## Removes leftover puppet nodes (e.g. after a respawn) that are no longer
+## tracked in _puppets. Without this, dead players respawn duplicated.
+func _remove_stray_puppets(parent: Node) -> void:
+	for child in parent.get_children():
+		if child.name.begins_with("Remote_") and not _puppets.values().has(child):
+			child.queue_free()
 
 
 func _remove_puppet(peer_id: int) -> void:

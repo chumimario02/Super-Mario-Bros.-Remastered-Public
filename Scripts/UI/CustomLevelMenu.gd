@@ -79,6 +79,7 @@ func _ready() -> void:
 	add_child(mp_menu)
 	mp_menu.singleplayer_chosen.connect(_start_singleplayer)
 	mp_menu.host_start_requested.connect(_start_host_level)
+	mp_menu.lss_requested.connect(open_lss_browser)
 	$BGM.play()
 
 func _process(delta: float) -> void:
@@ -125,6 +126,10 @@ func play_level() -> void:
 	Global.current_game_mode = Global.GameMode.CUSTOM_LEVEL
 	LevelEditor.load_play = true
 	_lss_play = false
+	if mp_menu == null:
+		# Safety net: never leave the PLAY button dead if the menu fails to load.
+		_start_singleplayer()
+		return
 	mp_menu.open(LevelEditor.level_name)
 
 func _start_singleplayer() -> void:
@@ -147,6 +152,9 @@ func online_play() -> void:
 	Global.current_game_mode = Global.GameMode.CUSTOM_LEVEL
 	LevelEditor.load_play = true
 	_lss_play = true
+	if mp_menu == null:
+		_start_singleplayer()
+		return
 	mp_menu.open(LevelEditor.level_name)
 
 func lss_level_played() -> void:

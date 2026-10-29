@@ -5,6 +5,7 @@ extends Control
 
 signal singleplayer_chosen
 signal host_start_requested
+signal lss_requested
 signal closed
 
 const MIN_PANEL_SIZE := Vector2(210, 130)
@@ -18,10 +19,12 @@ var _room_level_label: Label
 var _players_box: VBoxContainer
 var _start_button: Button
 var _rooms_box: VBoxContainer
+var _games_box: VBoxContainer
 var _name_edit: LineEdit
 var _server_edit: LineEdit
 var _code_edit: LineEdit
 var _busy := false
+var standalone := false
 
 
 func _ready() -> void:
@@ -70,7 +73,8 @@ func _build() -> void:
 	margin.add_child(root)
 
 	_pages["modes"] = _build_modes_page()
-	_pages["online"] = _build_online_page()
+	_pages["servers"] = _build_servers_page()
+	_pages["games"] = _build_games_page()
 	_pages["rooms"] = _build_rooms_page()
 	_pages["lobby"] = _build_lobby_page()
 	_pages["settings"] = _build_settings_page()
@@ -119,10 +123,10 @@ func _build_modes_page() -> VBoxContainer:
 	return page
 
 
-func _build_online_page() -> VBoxContainer:
-	var page := _build_page("ONLINE CO-OP")
-	_button("CREATE PUBLIC ROOM", _on_create_room, page)
-	_button("PUBLIC ROOMS", _on_browse_rooms, page)
+func _build_servers_page() -> VBoxContainer:
+	var page := _build_page("SERVERS")
+	_button("CREATE SERVER", _on_create_room, page)
+	_button("PUBLIC SERVERS", _on_browse_rooms, page)
 
 	var code_row := HBoxContainer.new()
 	page.add_child(code_row)
@@ -136,6 +140,22 @@ func _build_online_page() -> VBoxContainer:
 
 	_button("SETTINGS", func(): _show_page("settings"), page)
 	_button("BACK", _show_modes, page)
+	return page
+
+
+func _build_games_page() -> VBoxContainer:
+	var page := _build_page("SELECT GAME")
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(190, 96)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	page.add_child(scroll)
+	_games_box = VBoxContainer.new()
+	_games_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_games_box)
+	var row := HBoxContainer.new()
+	page.add_child(row)
+	_button("REFRESH", _refresh_games, row)
+	_button("BACK", _show_online, row)
 	return page
 
 
@@ -203,7 +223,8 @@ func _build_settings_page() -> VBoxContainer:
 # Page handling
 # --------------------------------------------------------------------------
 
-func open(level_name := "CUSTOM LEVEL") -> void:
+func open(level_name := "CUSTOM LEVEL", is_standalone := false) -> void:
+	standalone = is_standalone
 	get_tree().paused = false
 	_busy = false
 	_status.text = ""
@@ -215,9 +236,16 @@ func open(level_name := "CUSTOM LEVEL") -> void:
 	_server_edit.text = NetPlay.signal_url
 	_code_edit.text = ""
 	show()
-	_show_page("modes")
-	if NetPlay.is_in_room():
+	if standalone:
+		_show_page("servers")
+	elif NetPlay.is_in_room():
 		_show_page("lobby")
+	else:
+		_show_page("modes")
+
+
+func open_standalone() -> void:
+	open("NETPLAY", true)
 
 
 func close() -> void:
@@ -243,7 +271,7 @@ func _show_modes() -> void:
 
 func _show_online() -> void:
 	_code_edit.text = ""
-	_show_page("online")
+	_show_page("servers")
 
 
 func _first_focusable(node: Node) -> Control:
@@ -272,9 +300,11 @@ func _on_back() -> void:
 	match _page:
 		"modes":
 			_on_close()
-		"online":
+		"servers":
 			_on_close()
 		"rooms":
+			_show_online()
+		"games":
 			_show_online()
 		"settings":
 			_show_online()
@@ -299,8 +329,128 @@ func _on_close() -> void:
 func _on_create_room() -> void:
 	if _busy:
 		return
+	_set_status("Choose the level for your server.")
+	_show_page("games")
+	_refresh_games()
+
+
+func _refresh_games() -> void:
+	if not is_instance_valid(_games_box):
+		return
+	for child in _games_box.get_children():
+		child.queue_free()
+
+	# Main games (campaigns)
+	var campaigns := [
+		{"id": "SMB1", "title": "SUPER MARIO BROS."},
+		{"id": "SMBLL", "title": "SMB: LOST LEVELS"},
+	]
+	for entry in campaigns:
+		var btn := Button.new()
+		btn.text = str(entry["title"])
+		btn.add_theme_font_size_override("font_size", 8)
+		btn.pressed.connect(_on_pick_campaign.bind(str(entry["id"])))
+		_games_box.add_child(btn)
+
+	var lss := Button.new()
+	lss.text = "LSS - LEVEL SHARE SQUARE"
+	lss.add_theme_font_size_override("font_size", 8)
+	lss.pressed.connect(_on_pick_lss)
+	_games_box.add_child(lss)
+
+	# Custom levels
+	if LevelEditor.level_file is Dictionary and not LevelEditor.level_file.is_empty():
+		var current := Button.new()
+		var current_name := LevelEditor.level_name if LevelEditor.level_name != "" else "CUSTOM LEVEL"
+		current.text = "CURRENT LEVEL: " + current_name
+		current.add_theme_font_size_override("font_size", 8)
+		current.pressed.connect(_on_use_current_level)
+		_games_box.add_child(current)
+
+	var levels := _scan_levels()
+	for entry in levels:
+		var btn := Button.new()
+		btn.text = str(entry["name"])
+		btn.tooltip_text = "By " + str(entry["author"])
+		btn.add_theme_font_size_override("font_size", 8)
+		btn.pressed.connect(_on_pick_game.bind(entry))
+		_games_box.add_child(btn)
+
+
+func _scan_levels() -> Array:
+	var found := []
+	var roots := [
+		Global.config_path.path_join("custom_levels"),
+		Global.config_path.path_join("custom_levels/downloaded"),
+	]
+	for root in roots:
+		var root_path := str(root)
+		if not DirAccess.dir_exists_absolute(root_path):
+			continue
+		for file_name in DirAccess.get_files_at(root_path):
+			var file_str := str(file_name)
+			if not file_str.ends_with(".lvl"):
+				continue
+			var path := root_path.path_join(file_str)
+			var data = JSONParser.parse_to_dict(path)
+			if not (data is Dictionary) or data.is_empty():
+				continue
+			var info: Dictionary = data.get("Info", {})
+			found.append({
+				"path": path,
+				"name": str(info.get("Name", file_str.get_basename())),
+				"author": str(info.get("Author", "PLAYER")),
+			})
+	return found
+
+
+func _on_use_current_level() -> void:
 	_busy = true
-	_set_status("Creating room...")
+	_set_status("Creating server...")
+	NetPlay.level_mode = "custom"
+	NetPlay.create_room(LevelEditor.level_name)
+
+
+## Host picked a main game (SMB1 / SMBS / SMBLL). The room starts at 1-1.
+func _on_pick_campaign(campaign: String) -> void:
+	NetPlay.level_mode = "campaign"
+	NetPlay.campaign_id = campaign
+	NetPlay.campaign_world = 1
+	NetPlay.campaign_level = 1
+	_busy = true
+	_set_status("Creating server...")
+	NetPlay.create_room(_campaign_title(campaign) + " 1-1")
+
+
+func _campaign_title(campaign: String) -> String:
+	match campaign:
+		"SMBS":
+			return "SMB: SPECIAL"
+		"SMBLL":
+			return "SMB: LOST LEVELS"
+		"SMBANN":
+			return "ALL NIGHT NIPPON"
+		_:
+			return "SUPER MARIO BROS."
+
+
+func _on_pick_lss() -> void:
+	hide()
+	lss_requested.emit()
+
+
+func _on_pick_game(entry: Dictionary) -> void:
+	var data = JSONParser.parse_to_dict(str(entry.get("path", "")))
+	if not (data is Dictionary) or data.is_empty():
+		_set_status("Could not read that level file.")
+		return
+	LevelEditor.level_file = data
+	LevelEditor.level_name = str(entry.get("name", "CUSTOM LEVEL"))
+	LevelEditor.level_author = str(entry.get("author", "PLAYER"))
+	Global.current_game_mode = Global.GameMode.CUSTOM_LEVEL
+	LevelEditor.load_play = true
+	_busy = true
+	_set_status("Creating server...")
 	NetPlay.create_room(LevelEditor.level_name)
 
 
@@ -325,7 +475,12 @@ func _on_join_code() -> void:
 
 
 func _on_start_level() -> void:
-	NetPlay.capture_level()
+	if standalone:
+		hide()
+		NetPlay.start_level()
+		return
+	if NetPlay.level_mode != "campaign":
+		NetPlay.capture_level()
 	hide()
 	host_start_requested.emit()
 
@@ -386,7 +541,7 @@ func _on_lobby_joined() -> void:
 func _on_lobby_left() -> void:
 	_busy = false
 	if visible:
-		_show_page("online")
+		_show_page("servers")
 
 
 func _refresh_lobby() -> void:
@@ -414,13 +569,13 @@ func _on_error(message: String) -> void:
 	_busy = false
 	_set_status(message)
 	if _page == "modes":
-		_show_page("online")
+		_show_page("servers")
 
 
 func _on_room_closed(reason: String) -> void:
 	_busy = false
 	_set_status(reason)
-	_show_page("online")
+	_show_page("servers")
 
 
 func _on_level_started() -> void:

@@ -12,6 +12,7 @@ static var last_theme := "Overworld"
 var last_campaign := "SMB1"
 var has_achievements_to_unlock := false
 @export var active_options: TitleScreenOptions = null
+var net_menu: MultiplayerMenu
 
 var star_offset_x := 0
 var star_offset_y := 0
@@ -48,6 +49,20 @@ func _ready() -> void:
 	Global.current_level = null
 	Global.world_num = clamp(Global.world_num, 1, get_world_count())
 	update_title()
+	setup_netplay_menu()
+
+
+func setup_netplay_menu() -> void:
+	net_menu = MultiplayerMenu.new()
+	net_menu.name = "NetplayMenu"
+	$CanvasLayer.add_child(net_menu)
+	$CanvasLayer/Options1.option_4_selected.connect(open_netplay)
+	net_menu.closed.connect(func(): $CanvasLayer/Options1.open())
+
+
+func open_netplay() -> void:
+	$CanvasLayer/Options1.close()
+	net_menu.open_standalone()
 
 func update_title() -> void:
 	SaveManager.apply_save(SaveManager.load_save(Global.current_campaign))

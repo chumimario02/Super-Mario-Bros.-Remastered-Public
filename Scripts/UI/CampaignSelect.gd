@@ -18,11 +18,25 @@ var campaign_jsons := {}
 static var custom_pack := ""
 
 func _ready() -> void:
+	add_netplay_entry()
 	update()
 	Global.level_theme_changed.connect(update)
 	get_starting_position()
 	handle_visuals()
 	get_level_packs()
+
+
+## Adds the "NETPLAY" entry at the end of the game list (before custom packs).
+func add_netplay_entry() -> void:
+	if campaign.has("NETPLAY"):
+		return
+	campaign.append("NETPLAY")
+	if campaign_icons.size() < campaign.size():
+		campaign_icons.append(campaign_icons[4] if campaign_icons.size() > 4 else campaign_icons[0])
+	var label: Label = %Custom.duplicate()
+	label.text = "NETPLAY"
+	label.visible = false
+	%CampaignNames.add_child(label)
 
 func update() -> void:
 	for icon in campaign_icons:
@@ -120,7 +134,8 @@ func handle_input() -> void:
 		if Settings.file.audio.extra_sfx == 1:
 			AudioManager.play_global_sfx("menu_move")
 	selected_index = wrap(selected_index, 0, campaign.size())
-	Global.current_campaign = campaign[selected_index]
+	if campaign[selected_index] != "NETPLAY":
+		Global.current_campaign = campaign[selected_index]
 	if Global.multibind_action_just_pressed("ui_accept"):
 		select()
 	elif Global.multibind_action_just_pressed("ui_back"):
@@ -130,6 +145,13 @@ func handle_input() -> void:
 		return
 
 func select() -> void:
+	if campaign[selected_index] == "NETPLAY":
+		active = false
+		hide()
+		var screen := owner
+		if screen != null and screen.has_method("open_netplay"):
+			screen.call("open_netplay")
+		return
 	CustomLevelMenu.has_entered = false
 	Global.current_custom_campaign = ""
 	var idx := 0

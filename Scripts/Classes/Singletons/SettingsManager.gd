@@ -151,8 +151,13 @@ func fix_broken_settings() -> void:
 		file.visuals.resource_packs[i] = str(file.visuals.resource_packs[i]).trim_prefix("/")
 
 func apply_settings() -> void:
+	# window_size must be applied BEFORE the window mode, otherwise setting the
+	# size un-maximizes / un-fullscreens the window right after startup.
 	for i in file.video.keys():
+		if i == "mode":
+			continue
 		$Apply/Video.set_value(i, file.video[i])
+	$Apply/Video.set_value("mode", file.video.mode)
 	for i in file.audio.keys():
 		$Apply/Audio.set_value(i, file.audio[i])
 	if Settings.file.game.has("characters"):
