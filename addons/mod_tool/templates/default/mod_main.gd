@@ -20,7 +20,7 @@ var translations_dir_path := ""
 
 
 # ! your _ready func.
-func _init() -> void:
+func _init():
 	ModLoaderLog.info("Init", LOG_NAME)
 	mod_dir_path = ModLoaderMod.get_unpacked_dir().path_join(MOD_DIR)
 

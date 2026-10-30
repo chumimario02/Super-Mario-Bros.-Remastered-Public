@@ -150,6 +150,9 @@ function handleMessage(ws, msg) {
     case "signal":
       return relaySignal(ws, msg);
 
+    case "relay":
+      return relayGame(ws, msg);
+
     case "room_info":
       return updateRoomInfo(ws, msg);
 
@@ -267,6 +270,30 @@ function relaySignal(ws, msg) {
   const target = room.peers.get(Number(msg.to));
   if (!target || target === ws) return;
   send(target, { t: "signal", from: ws.peerId, data: msg.data || {} });
+}
+
+/**
+ * Gameplay relay: forwards a method call to the room (or a single peer).
+ * The server never inspects the payload, it only routes it.
+ */
+function relayGame(ws, msg) {
+  const room = ws.room;
+  if (!room) return;
+  const method = String(msg.m || "");
+  if (!method.startsWith("net_")) return;
+  const payload = {
+    t: "relay",
+    from: ws.peerId,
+    m: method,
+    a: Array.isArray(msg.a) ? msg.a : [],
+  };
+  const to = Number(msg.to || 0);
+  if (to > 0) {
+    const target = room.peers.get(to);
+    if (target && target !== ws) send(target, payload);
+    return;
+  }
+  broadcast(room, payload, ws.peerId);
 }
 
 function updateRoomInfo(ws, msg) {

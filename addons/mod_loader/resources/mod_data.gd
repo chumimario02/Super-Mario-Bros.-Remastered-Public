@@ -67,7 +67,7 @@ var load_warnings: Array[String] = []
 
 
 
-func _init(_manifest: ModManifest, path: String) -> void:
+func _init(_manifest: ModManifest, path: String):
 	manifest = _manifest
 
 	if _ModLoaderPath.is_zip(path):

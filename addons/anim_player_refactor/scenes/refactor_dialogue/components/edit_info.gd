@@ -18,7 +18,7 @@ var node: Node
 ## Animations the track is used in
 var animation_names: Array[String] = []
 
-func _init(type: Type, path: NodePath, node_path: NodePath, node: Node, animation_names: Array[String]) -> void:
+func _init(type: Type, path: NodePath, node_path: NodePath, node: Node, animation_names: Array[String]):
 	self.type = type
 	self.path = path
 	self.node = node

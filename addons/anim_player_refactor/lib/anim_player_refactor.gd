@@ -5,7 +5,7 @@ const EditorUtil := preload("res://addons/anim_player_refactor/lib/editor_util.g
 var _editor_plugin: EditorPlugin
 var _undo_redo: EditorUndoRedoManager
 
-func _init(editor_plugin: EditorPlugin) -> void:
+func _init(editor_plugin: EditorPlugin):
 	_editor_plugin = editor_plugin
 	_undo_redo = editor_plugin.get_undo_redo()
 

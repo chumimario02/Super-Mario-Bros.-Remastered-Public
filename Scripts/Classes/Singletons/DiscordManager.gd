@@ -1,6 +1,6 @@
 extends Node
 
-var enabled: bool = ProjectSettings.get_setting("application/use_discord", false) and not (OS.has_feature("linux") and OS.has_feature("arm64"))
+var enabled: bool = ProjectSettings.get_setting("application/use_discord", false) and not OS.has_feature("web") and not (OS.has_feature("linux") and OS.has_feature("arm64"))
 var rpc = null
 
 class DiscordRPCStub:

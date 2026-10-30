@@ -13,14 +13,14 @@ class ContextActionOptions:
 	var meta_key: StringName
 	var tooltip: String
 
-	func _init(_icon, _title, _meta_key, _tooltip) -> void:
+	func _init(_icon, _title, _meta_key, _tooltip):
 		icon = _icon
 		title = _title
 		meta_key = _meta_key
 		tooltip = _tooltip
 
 
-func _init(_mod_tool_store: ModToolStore, file_system_dock: FileSystemDock) -> void:
+func _init(_mod_tool_store: ModToolStore, file_system_dock: FileSystemDock):
 	mod_tool_store = _mod_tool_store
 	connect_file_system_context_actions(file_system_dock)
 

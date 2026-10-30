@@ -82,7 +82,7 @@ class ModLoaderLogEntry:
 	##[br]
 	## [b]Returns:[/b][br]
 	## - No return value[br]
-	func _init(_mod_name: String, _message: String, _type: String, _time: String) -> void:
+	func _init(_mod_name: String, _message: String, _type: String, _time: String):
 		mod_name = _mod_name
 		message = _message
 		type = _type

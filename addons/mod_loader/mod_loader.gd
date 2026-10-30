@@ -31,7 +31,7 @@ signal new_hooks_created
 const LOG_NAME := "ModLoader"
 
 
-func _init() -> void:
+func _init():
 	# if mods are not enabled - don't load mods
 	if ModLoaderStore.REQUIRE_CMD_LINE and not _ModLoaderCLI.is_running_with_command_line_arg("--enable-mods"):
 		return

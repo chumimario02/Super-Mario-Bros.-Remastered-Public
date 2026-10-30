@@ -35,7 +35,7 @@ class InheritanceSorting:
 	# This dictionary's keys are mod_ids and it stores the corresponding position in the load_order
 	var load_order := {}
 
-	func _init(inheritance_array_to_sort: Array) -> void:
+	func _init(inheritance_array_to_sort: Array):
 		_populate_load_order_table()
 		inheritance_array_to_sort.sort_custom(check_inheritances)
 

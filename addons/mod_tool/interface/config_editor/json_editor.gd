@@ -206,7 +206,7 @@ class TextSelection:
 	var to_line: int
 	var to_col: int
 
-	func _init(p_enclosed_text: String, p_from_line: int, p_from_col: int, p_to_line: int, p_to_col: int) -> void:
+	func _init(p_enclosed_text: String, p_from_line: int, p_from_col: int, p_to_line: int, p_to_col: int):
 		enclosed_text = p_enclosed_text
 		from_line = p_from_line
 		from_col = p_from_col

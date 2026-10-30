@@ -23,7 +23,7 @@ var save_path: String
 var valid := false
 
 
-func _init(_mod_id: String, _data: Dictionary, _save_path: String, _schema: Dictionary = {}) -> void:
+func _init(_mod_id: String, _data: Dictionary, _save_path: String, _schema: Dictionary = {}):
 	name = _ModLoaderPath.get_file_name_from_path(_save_path, true, true)
 	mod_id = _mod_id
 	schema = ModLoaderStore.mod_data[_mod_id].manifest.config_schema if _schema.is_empty() else _schema

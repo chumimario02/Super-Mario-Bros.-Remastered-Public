@@ -68,7 +68,7 @@ const REQUIRED_MANIFEST_KEYS_EXTRA: Array[String] = [
 
 # Takes the manifest as [Dictionary] and validates everything.
 # Will return null if something is invalid.
-func _init(manifest: Dictionary, path: String) -> void:
+func _init(manifest: Dictionary, path: String):
 	if manifest.is_empty():
 		validation_messages_error.push_back("The manifest cannot be validated due to missing data, most likely because parsing the manifest.json file failed.")
 		has_parsing_failed = true

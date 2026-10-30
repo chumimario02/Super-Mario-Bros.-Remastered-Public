@@ -1394,6 +1394,8 @@ func set_power_state_frame() -> void:
 func get_power_up(power_name := "", give_points := true) -> void:
 	if is_dead:
 		return
+	if NetPlay.is_playing_online() and not NetPlay._applying_remote:
+		NetPlay.broadcast_power_up(power_name)
 	if give_points:
 		Global.score += 1000
 		DiscoLevel.combo_amount += 1

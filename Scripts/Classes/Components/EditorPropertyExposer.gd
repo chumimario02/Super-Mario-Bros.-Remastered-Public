@@ -14,7 +14,7 @@ const base64_charset := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 
 signal modifier_applied
 
-func _init() -> void:
+func _init():
 	name = "EditorPropertyExposer"
 
 func _ready() -> void:

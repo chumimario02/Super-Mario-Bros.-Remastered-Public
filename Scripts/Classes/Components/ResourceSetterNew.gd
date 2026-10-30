@@ -48,7 +48,7 @@ var update_on_spawn := true
 
 var source_json := {}
 
-func _init() -> void:
+func _init():
 	set_process_mode(Node.PROCESS_MODE_ALWAYS)
 
 func _ready() -> void:

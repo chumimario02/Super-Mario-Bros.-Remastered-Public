@@ -9,6 +9,7 @@ signal lss_requested
 signal closed
 
 const MIN_PANEL_SIZE := Vector2(210, 130)
+const CHARACTER_SELECT_SCENE := preload("res://Scenes/Prefabs/UI/CharacterSelect.tscn")
 
 var _panel: PanelContainer
 var _pages := {}
@@ -20,6 +21,17 @@ var _players_box: VBoxContainer
 var _start_button: Button
 var _rooms_box: VBoxContainer
 var _games_box: VBoxContainer
+var _servers_name: LineEdit
+var _host_box: VBoxContainer
+var _world_select: OptionButton
+var _level_select: OptionButton
+var _inf_lives: CheckBox
+var _inf_time: CheckBox
+var _campaign_row: HBoxContainer
+var _character_btn: Button
+var _public_check: CheckBox
+var _character_select_open := false
+var _host_campaign := ""
 var _name_edit: LineEdit
 var _server_edit: LineEdit
 var _code_edit: LineEdit
@@ -125,6 +137,26 @@ func _build_modes_page() -> VBoxContainer:
 
 func _build_servers_page() -> VBoxContainer:
 	var page := _build_page("SERVERS")
+
+	var name_row := HBoxContainer.new()
+	page.add_child(name_row)
+	var name_label := Label.new()
+	name_label.text = "NAME"
+	name_label.add_theme_font_size_override("font_size", 8)
+	name_row.add_child(name_label)
+	_servers_name = LineEdit.new()
+	_servers_name.max_length = 12
+	_servers_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_servers_name.add_theme_font_size_override("font_size", 10)
+	name_row.add_child(_servers_name)
+	_button("SAVE", _on_save_name, name_row)
+
+	_public_check = CheckBox.new()
+	_public_check.text = "PUBLIC SERVER"
+	_public_check.button_pressed = true
+	_public_check.add_theme_font_size_override("font_size", 8)
+	page.add_child(_public_check)
+
 	_button("CREATE SERVER", _on_create_room, page)
 	_button("PUBLIC SERVERS", _on_browse_rooms, page)
 
@@ -190,9 +222,70 @@ func _build_lobby_page() -> VBoxContainer:
 	_players_box = VBoxContainer.new()
 	_players_box.custom_minimum_size = Vector2(190, 40)
 	page.add_child(_players_box)
+
+	_host_box = VBoxContainer.new()
+	page.add_child(_host_box)
+	_campaign_row = HBoxContainer.new()
+	_host_box.add_child(_campaign_row)
+	var world_label := Label.new()
+	world_label.text = "WORLD"
+	world_label.add_theme_font_size_override("font_size", 8)
+	_campaign_row.add_child(world_label)
+	_world_select = OptionButton.new()
+	_world_select.add_theme_font_size_override("font_size", 8)
+	_campaign_row.add_child(_world_select)
+	var level_label := Label.new()
+	level_label.text = "LEVEL"
+	level_label.add_theme_font_size_override("font_size", 8)
+	_campaign_row.add_child(level_label)
+	_level_select = OptionButton.new()
+	_level_select.add_theme_font_size_override("font_size", 8)
+	_campaign_row.add_child(_level_select)
+	_inf_lives = CheckBox.new()
+	_inf_lives.text = "INFINITE LIVES"
+	_inf_lives.add_theme_font_size_override("font_size", 8)
+	_host_box.add_child(_inf_lives)
+	_inf_time = CheckBox.new()
+	_inf_time.text = "NO TIME LIMIT"
+	_inf_time.add_theme_font_size_override("font_size", 8)
+	_host_box.add_child(_inf_time)
+
+	_character_btn = _button("CHARACTER: MARIO", _cycle_character, page)
 	_start_button = _button("START LEVEL", _on_start_level, page)
 	_button("LEAVE ROOM", _on_leave_room, page)
 	return page
+
+
+func _cycle_character() -> void:
+	if _character_select_open:
+		return
+	_character_select_open = true
+	var select = CHARACTER_SELECT_SCENE.instantiate()
+	var host: Node = get_tree().current_scene
+	var canvas = host.get_node_or_null("CanvasLayer") if host != null else null
+	if canvas != null:
+		canvas.add_child(select)
+	elif host != null:
+		host.add_child(select)
+	else:
+		add_child(select)
+	hide()
+	select.set("player_id", 0)
+	select.open()
+	await select.selected
+	select.queue_free()
+	_character_select_open = false
+	show()
+	_focus_page()
+	if is_instance_valid(_character_btn):
+		_character_btn.text = ("CHARACTER: " + Player.CHARACTERS[int(Global.player_characters[0])]).to_upper()
+
+
+func _focus_page() -> void:
+	await get_tree().process_frame
+	var target := _first_focusable(_pages.get(_page, self))
+	if target != null:
+		target.grab_focus()
 
 
 func _build_settings_page() -> VBoxContainer:
@@ -234,6 +327,7 @@ func open(level_name := "CUSTOM LEVEL", is_standalone := false) -> void:
 			child.text = level_name if level_name != "" else "CUSTOM LEVEL"
 	_name_edit.text = NetPlay.player_name
 	_server_edit.text = NetPlay.signal_url
+	_servers_name.text = NetPlay.player_name
 	_code_edit.text = ""
 	show()
 	if standalone:
@@ -256,7 +350,7 @@ func _show_page(page_name: String) -> void:
 	_page = page_name
 	for key in _pages.keys():
 		_pages[key].visible = key == page_name
-	_status.text = NetPlay.get_status() if page_name != "modes" else ""
+	_status.text = NetPlay.get_status().to_upper() if page_name != "modes" else ""
 	await get_tree().process_frame
 	var target := _first_focusable(_pages[page_name])
 	if target != null:
@@ -362,7 +456,7 @@ func _refresh_games() -> void:
 	if LevelEditor.level_file is Dictionary and not LevelEditor.level_file.is_empty():
 		var current := Button.new()
 		var current_name := LevelEditor.level_name if LevelEditor.level_name != "" else "CUSTOM LEVEL"
-		current.text = "CURRENT LEVEL: " + current_name
+		current.text = ("CURRENT LEVEL: " + current_name).to_upper()
 		current.add_theme_font_size_override("font_size", 8)
 		current.pressed.connect(_on_use_current_level)
 		_games_box.add_child(current)
@@ -370,7 +464,7 @@ func _refresh_games() -> void:
 	var levels := _scan_levels()
 	for entry in levels:
 		var btn := Button.new()
-		btn.text = str(entry["name"])
+		btn.text = str(entry["name"]).to_upper()
 		btn.tooltip_text = "By " + str(entry["author"])
 		btn.add_theme_font_size_override("font_size", 8)
 		btn.pressed.connect(_on_pick_game.bind(entry))
@@ -408,7 +502,7 @@ func _on_use_current_level() -> void:
 	_busy = true
 	_set_status("Creating server...")
 	NetPlay.level_mode = "custom"
-	NetPlay.create_room(LevelEditor.level_name)
+	NetPlay.create_room(LevelEditor.level_name, _public_check.button_pressed)
 
 
 ## Host picked a main game (SMB1 / SMBS / SMBLL). The room starts at 1-1.
@@ -419,7 +513,7 @@ func _on_pick_campaign(campaign: String) -> void:
 	NetPlay.campaign_level = 1
 	_busy = true
 	_set_status("Creating server...")
-	NetPlay.create_room(_campaign_title(campaign) + " 1-1")
+	NetPlay.create_room(_campaign_title(campaign) + " 1-1", _public_check.button_pressed)
 
 
 func _campaign_title(campaign: String) -> String:
@@ -451,7 +545,7 @@ func _on_pick_game(entry: Dictionary) -> void:
 	LevelEditor.load_play = true
 	_busy = true
 	_set_status("Creating server...")
-	NetPlay.create_room(LevelEditor.level_name)
+	NetPlay.create_room(LevelEditor.level_name, _public_check.button_pressed)
 
 
 func _on_browse_rooms() -> void:
@@ -475,6 +569,11 @@ func _on_join_code() -> void:
 
 
 func _on_start_level() -> void:
+	NetPlay.infinite_lives = _inf_lives.button_pressed
+	NetPlay.infinite_time = _inf_time.button_pressed
+	if NetPlay.level_mode == "campaign" and is_instance_valid(_world_select):
+		NetPlay.campaign_world = _world_select.selected + 1
+		NetPlay.campaign_level = _level_select.selected + 1
 	if standalone:
 		hide()
 		NetPlay.start_level()
@@ -507,7 +606,7 @@ func _on_rooms_listed(rooms: Array) -> void:
 		child.queue_free()
 	if rooms.is_empty():
 		var empty := Label.new()
-		empty.text = "No public rooms right now."
+		empty.text = "NO PUBLIC ROOMS RIGHT NOW."
 		empty.add_theme_font_size_override("font_size", 8)
 		_rooms_box.add_child(empty)
 	else:
@@ -517,7 +616,7 @@ func _on_rooms_listed(rooms: Array) -> void:
 			var host := str(room.get("host", "PLAYER"))
 			var count := int(room.get("players", 1))
 			var max_players := int(room.get("max", NetPlay.MAX_PLAYERS))
-			btn.text = "%s  %s (%d/%d)" % [str(room.get("code", "?")), level, count, max_players]
+			btn.text = ("%s  %s (%d/%d)" % [str(room.get("code", "?")), level, count, max_players]).to_upper()
 			btn.tooltip_text = "Host: %s" % host
 			btn.add_theme_font_size_override("font_size", 8)
 			btn.pressed.connect(_on_room_button.bind(str(room.get("code", ""))))
@@ -553,16 +652,49 @@ func _refresh_lobby() -> void:
 	for p in players:
 		var line := Label.new()
 		var marker := " (HOST)" if int(p.get("id", 0)) == 1 else ""
-		line.text = "- %s%s" % [str(p.get("name", "PLAYER")), marker]
+		line.text = ("- %s%s" % [str(p.get("name", "PLAYER")), marker]).to_upper()
 		line.add_theme_font_size_override("font_size", 8)
 		_players_box.add_child(line)
-	_room_code_label.text = "CODE: %s" % NetPlay.get_room_code()
+	_room_code_label.text = ("CODE: %s" % NetPlay.get_room_code()).to_upper()
 	var shown_level := NetPlay.room_level_name
 	if shown_level == "":
 		shown_level = LevelEditor.level_name
-	_room_level_label.text = shown_level
+	_room_level_label.text = shown_level.to_upper()
+	if is_instance_valid(_character_btn):
+		_character_btn.text = ("CHARACTER: " + Player.CHARACTERS[int(Global.player_characters[0])]).to_upper()
 	_start_button.visible = NetPlay.is_host
 	_start_button.disabled = !NetPlay.is_host
+	_refresh_host_options()
+
+
+func _refresh_host_options() -> void:
+	if not is_instance_valid(_host_box):
+		return
+	var is_campaign := NetPlay.level_mode == "campaign"
+	_host_box.visible = NetPlay.is_host
+	if is_instance_valid(_campaign_row):
+		_campaign_row.visible = is_campaign
+	_inf_lives.button_pressed = NetPlay.infinite_lives
+	_inf_time.button_pressed = NetPlay.infinite_time
+	if not is_campaign:
+		return
+	if _host_campaign != NetPlay.campaign_id:
+		_host_campaign = NetPlay.campaign_id
+		_world_select.clear()
+		var worlds := 13 if _host_campaign == "SMBLL" else 8
+		for w in worlds:
+			_world_select.add_item(str(w + 1))
+		_world_select.selected = clampi(NetPlay.campaign_world - 1, 0, worlds - 1)
+		_level_select.clear()
+		for l in 4:
+			_level_select.add_item(str(l + 1))
+		_level_select.selected = clampi(NetPlay.campaign_level - 1, 0, 3)
+		_inf_lives.button_pressed = NetPlay.infinite_lives
+
+
+func _on_save_name() -> void:
+	NetPlay.set_player_name(_servers_name.text)
+	_set_status("Jugador: " + NetPlay.player_name)
 
 
 func _on_error(message: String) -> void:
@@ -589,4 +721,4 @@ func _on_status_changed(text: String) -> void:
 
 func _set_status(text: String) -> void:
 	if is_instance_valid(_status):
-		_status.text = text
+		_status.text = text.to_upper()

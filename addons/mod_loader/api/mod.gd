@@ -156,7 +156,7 @@ static func install_script_hooks(vanilla_script_path: String, hook_script_path: 
 ##
 ## It can be hooked in [code]mod_main.gd[/code] like this
 ## [codeblock]
-## func _init() -> void:
+## func _init():
 ##     ModLoaderMod.add_hook(change_version, "res://main.gd", "_ready")
 ##     ModLoaderMod.add_hook(time_travel, "res://tools/utilities.gd", "format_date")
 ##     # Multiple hooks can be added to a single method.

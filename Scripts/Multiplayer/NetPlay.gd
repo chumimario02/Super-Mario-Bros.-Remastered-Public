@@ -18,6 +18,7 @@ signal room_closed(reason: String)
 
 const MAX_PLAYERS := 4
 const STATE_HZ := 20.0
+const RELIABLE_STATE_HZ := 8.0
 const DEFAULT_SERVER := "wss://smb1r-online-rooms.onrender.com/ws"
 const CONFIG_PATH := "user://multiplayer.cfg"
 const REMOTE_PLAYER_SCRIPT := preload("res://Scripts/Multiplayer/RemotePlayer.gd")
@@ -50,6 +51,10 @@ var level_mode := "custom"
 var campaign_id := "SMB1"
 var campaign_world := 1
 var campaign_level := 1
+## Host option: everyone gets infinite lives in this session.
+var infinite_lives := false
+## Host option: disable the level timer for this session.
+var infinite_time := false
 
 var _ws: WebSocketPeer = null
 var _ws_opened := false
@@ -66,11 +71,19 @@ var _puppet_parent: Node = null
 var _local_player: Player = null
 var _current_level: Level = null
 var _send_accum := 0.0
+var _reliable_accum := 0.0
 var _hello_sent := false
 var _entity_cache := {}
 var _entity_cache_root: Node = null
 ## True while applying an event that came from another peer (prevents echo loops).
 var _applying_remote := false
+## Transport: "relay" routes gameplay through the room server (light and works
+## on any device), "p2p" keeps the old WebRTC mesh for future use.
+var relay_mode := true
+var _relay_sender := 0
+## Co-op death handling: after dying, respawn next to the closest teammate.
+var _awaiting_respawn := false
+var _dead_hooked_player: Player = null
 ## Test helper: skips the "press a button" wait on the level transition screen.
 var _auto_advance := false
 var _simple_level := false
@@ -103,7 +116,7 @@ func is_in_room() -> bool:
 
 
 func is_playing_online() -> bool:
-	return level_active and _rtc != null
+	return level_active and mode == Mode.IN_ROOM
 
 
 func get_status() -> String:
@@ -139,12 +152,12 @@ func request_rooms() -> void:
 	_queue_action({"t": "list"})
 
 
-## Create a public room. Only the host may call this.
-func create_room(for_level_name := "") -> void:
+## Create a public or private room (private ones only join by code).
+func create_room(for_level_name := "", is_public := true) -> void:
 	room_level_name = for_level_name if for_level_name != "" else "CUSTOM LEVEL"
 	_queue_action({
 		"t": "create",
-		"public": true,
+		"public": is_public,
 		"name": room_level_name,
 		"max": MAX_PLAYERS,
 		"player": player_name,
@@ -182,25 +195,32 @@ func start_level() -> void:
 	if not is_host:
 		return
 	if level_mode == "campaign":
-		start_campaign(campaign_id, campaign_world, campaign_level)
+		start_campaign(campaign_id, campaign_world, campaign_level, infinite_lives, infinite_time)
 		return
 	if not level_active:
 		capture_level()
-	rpc("net_start_level", level_file, _level_meta())
+	_broadcast("net_start_level", [level_file, _level_meta()])
 	_enter_level_scene()
 
 
 ## Host: start a campaign (SMB1 / SMBS / SMBLL / SMBANN) level for the room.
-func start_campaign(campaign: String, world: int, level: int) -> void:
+func start_campaign(campaign: String, world: int, level: int, inf_lives := false, inf_time := false) -> void:
 	level_mode = "campaign"
 	campaign_id = campaign
 	campaign_world = max(1, world)
 	campaign_level = max(1, level)
+	infinite_lives = inf_lives
+	infinite_time = inf_time
+	_apply_lives_rule()
 	level_hash = "campaign:%s:%d:%d" % [campaign_id, campaign_world, campaign_level]
 	level_name = "%s %d-%d" % [campaign_id, campaign_world, campaign_level]
 	level_active = true
-	rpc("net_start_campaign", campaign_id, campaign_world, campaign_level)
+	_broadcast("net_start_campaign", [campaign_id, campaign_world, campaign_level, infinite_lives, infinite_time])
 	_enter_campaign_level()
+
+
+func _apply_lives_rule() -> void:
+	Settings.file.difficulty.inf_lives = 1 if infinite_lives else 0
 
 
 func _enter_campaign_level() -> void:
@@ -258,10 +278,15 @@ func _watch_level(delta: float) -> void:
 	_clear_puppets()
 	_puppet_parent = null
 	_local_player = null
+	if infinite_time:
+		Global.inf_time = true
+		Global.can_time_tick = false
 	# Speedrun ghosts look like extra players online, so keep them off.
 	SpeedrunHandler.ghost_active = false
 	SpeedrunHandler.ghost_enabled = false
 	get_tree().call_group("PlayerGhosts", "delete")
+	if _awaiting_respawn:
+		_respawn_near_team()
 	print("[NetPlay] level detected (players=%d)" % get_tree().get_nodes_in_group("Players").size())
 
 
@@ -306,6 +331,8 @@ func _level_meta() -> Dictionary:
 		"hash": level_hash,
 		"name": level_name,
 		"author": level_author,
+		"inf_lives": infinite_lives,
+		"inf_time": infinite_time,
 	}
 
 
@@ -382,6 +409,8 @@ func _handle_server_message(msg: Dictionary) -> void:
 			peers_info[int(peer.get("id", 0))] = peer
 			peers_changed.emit()
 			_maybe_connect_peer(int(peer.get("id", 0)), my_id > int(peer.get("id", 0)))
+			if is_host and level_active:
+				_broadcast("net_start_level", [level_file, _level_meta()], int(peer.get("id", 0)))
 		"peer_left":
 			var left_id := int(msg.get("id", 0))
 			peers_info.erase(left_id)
@@ -392,6 +421,12 @@ func _handle_server_message(msg: Dictionary) -> void:
 			_conns.erase(left_id)
 		"signal":
 			_on_remote_signal(int(msg.get("from", 0)), msg.get("data", {}))
+		"relay":
+			var method := str(msg.get("m", ""))
+			if method.begins_with("net_") and has_method(method):
+				_relay_sender = int(msg.get("from", 0))
+				callv(method, msg.get("a", []))
+				_relay_sender = 0
 		"room_closed":
 			var reason := str(msg.get("msg", "The host left the room."))
 			_clear_session()
@@ -423,14 +458,15 @@ func _on_room_joined(msg: Dictionary) -> void:
 	peers_info[my_id] = {"id": my_id, "name": player_name}
 	for p in msg.get("peers", []):
 		peers_info[int(p.get("id", 0))] = p
-	_create_mesh()
-	for id in peers_info.keys():
-		var other := int(id)
-		if other == my_id:
-			continue
-		# Deterministic offerer: host (1) always answers, and between clients the
-		# highest id sends the offer. This avoids WebRTC glare on simultaneous joins.
-		_maybe_connect_peer(other, other == 1 or my_id > other, true)
+	if not relay_mode:
+		_create_mesh()
+		for id in peers_info.keys():
+			var other := int(id)
+			if other == my_id:
+				continue
+			# Deterministic offerer: host (1) always answers, and between clients the
+			# highest id sends the offer. This avoids WebRTC glare on simultaneous joins.
+			_maybe_connect_peer(other, other == 1 or my_id > other, true)
 	_set_status("Room %s" % room_code if room_code != "" else "In room")
 	lobby_joined.emit()
 	peers_changed.emit()
@@ -480,6 +516,8 @@ func _create_mesh() -> void:
 
 
 func _maybe_connect_peer(peer_id: int, as_offerer: bool, force := false) -> void:
+	if relay_mode:
+		return
 	if _rtc == null or peer_id <= 0 or peer_id == my_id:
 		return
 	if _conns.has(peer_id) and not force:
@@ -553,6 +591,8 @@ func _on_remote_signal(from_id: int, data: Dictionary) -> void:
 
 
 func _on_peer_connected(id: int) -> void:
+	if relay_mode:
+		return
 	if not is_host and id == 1 and not _hello_sent:
 		_hello_sent = true
 		rpc_id(1, "net_hello", {"name": player_name})
@@ -577,12 +617,26 @@ func _on_server_disconnected() -> void:
 
 
 # --------------------------------------------------------------------------
+# Transport helpers (relay through the room server)
+# --------------------------------------------------------------------------
+
+func _broadcast(method: String, args: Array, to_id := 0) -> void:
+	_send_ws({"t": "relay", "m": method, "a": args, "to": to_id})
+
+
+func _sender_id() -> int:
+	if _relay_sender > 0:
+		return _relay_sender
+	return multiplayer.get_remote_sender_id()
+
+
+# --------------------------------------------------------------------------
 # RPCs
 # --------------------------------------------------------------------------
 
 @rpc("any_peer", "call_remote", "reliable")
 func net_hello(info: Dictionary) -> void:
-	var sender := multiplayer.get_remote_sender_id()
+	var sender := _sender_id()
 	if sender <= 0:
 		return
 	var remote_name := str(info.get("name", "PLAYER"))
@@ -592,14 +646,14 @@ func net_hello(info: Dictionary) -> void:
 		peers_info[sender] = {"id": sender, "name": remote_name}
 	peers_changed.emit()
 	if is_host and level_active:
-		rpc_id(sender, "net_start_level", level_file, _level_meta())
+		_broadcast("net_start_level", [level_file, _level_meta()], sender)
 
 
 @rpc("any_peer", "call_remote", "reliable")
 func net_request_level() -> void:
 	if not is_host or not level_active:
 		return
-	rpc_id(multiplayer.get_remote_sender_id(), "net_start_level", level_file, _level_meta())
+	_broadcast("net_start_level", [level_file, _level_meta()], _sender_id())
 
 
 # --------------------------------------------------------------------------
@@ -623,7 +677,7 @@ func broadcast_block_hit(block: Node) -> void:
 	var id := entity_id(block)
 	if id == "":
 		return
-	rpc("net_block_hit", id, _room_key())
+	_broadcast("net_block_hit", [id, _room_key()])
 
 
 func broadcast_enemy_died(enemy: Node) -> void:
@@ -632,7 +686,27 @@ func broadcast_enemy_died(enemy: Node) -> void:
 	var id := entity_id(enemy)
 	if id == "":
 		return
-	rpc("net_enemy_died", id, _room_key())
+	_broadcast("net_enemy_died", [id, _room_key()])
+
+
+## Shared power-ups: if one player grabs one, everybody gets it.
+func broadcast_power_up(power_name: String) -> void:
+	if not is_playing_online() or _applying_remote or power_name == "":
+		return
+	_broadcast("net_power_up", [power_name, _room_key()])
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func net_power_up(power_name: String, room: String) -> void:
+	if not level_active or room != _room_key():
+		return
+	if not is_instance_valid(_local_player):
+		_local_player = get_tree().get_first_node_in_group("Players") as Player
+	if not is_instance_valid(_local_player):
+		return
+	_applying_remote = true
+	_local_player.get_power_up(power_name, false)
+	_applying_remote = false
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -691,6 +765,8 @@ func _scene_root() -> Node:
 
 @rpc("authority", "call_remote", "reliable")
 func net_start_level(remote_level: Dictionary, meta: Dictionary) -> void:
+	if _sender_id() != 1 or is_host:
+		return
 	if remote_level.is_empty():
 		return
 	var new_hash := str(meta.get("hash", ""))
@@ -701,11 +777,16 @@ func net_start_level(remote_level: Dictionary, meta: Dictionary) -> void:
 	level_author = str(meta.get("author", "PLAYER"))
 	level_hash = new_hash
 	level_active = true
+	infinite_lives = bool(meta.get("inf_lives", false))
+	infinite_time = bool(meta.get("inf_time", false))
+	_apply_lives_rule()
 	_enter_level_scene()
 
 
 @rpc("authority", "call_remote", "reliable")
-func net_start_campaign(campaign: String, world: int, level: int) -> void:
+func net_start_campaign(campaign: String, world: int, level: int, inf_lives := false, inf_time := false) -> void:
+	if _sender_id() != 1 or is_host:
+		return
 	var new_hash := "campaign:%s:%d:%d" % [campaign, world, level]
 	if level_active and level_hash == new_hash:
 		return
@@ -713,6 +794,9 @@ func net_start_campaign(campaign: String, world: int, level: int) -> void:
 	campaign_id = campaign
 	campaign_world = world
 	campaign_level = level
+	infinite_lives = inf_lives
+	infinite_time = inf_time
+	_apply_lives_rule()
 	level_hash = new_hash
 	level_name = "%s %d-%d" % [campaign, world, level]
 	level_active = true
@@ -721,7 +805,18 @@ func net_start_campaign(campaign: String, world: int, level: int) -> void:
 
 @rpc("any_peer", "call_remote", "unreliable_ordered")
 func net_player_state(data: Dictionary) -> void:
-	var sender := multiplayer.get_remote_sender_id()
+	_apply_player_state(data)
+
+
+## Reliable copy of the player state. Web clients do not always receive the
+## unreliable_ordered channel from native peers, so we resend at a low rate.
+@rpc("any_peer", "call_remote", "reliable")
+func net_player_state_sync(data: Dictionary) -> void:
+	_apply_player_state(data)
+
+
+func _apply_player_state(data: Dictionary) -> void:
+	var sender := _sender_id()
 	if sender <= 0 or not level_active:
 		return
 	if str(data.get("h", "")) != level_hash or str(data.get("r", "")) != _room_key():
@@ -740,7 +835,7 @@ func net_player_state(data: Dictionary) -> void:
 # --------------------------------------------------------------------------
 
 func _send_local_state(delta: float) -> void:
-	if not is_playing_online() or _rtc == null:
+	if not is_playing_online():
 		return
 	_send_accum += delta
 	if _send_accum < 1.0 / STATE_HZ:
@@ -750,6 +845,10 @@ func _send_local_state(delta: float) -> void:
 		_local_player = get_tree().get_first_node_in_group("Players") as Player
 	if not is_instance_valid(_local_player):
 		return
+	if _dead_hooked_player != _local_player:
+		_dead_hooked_player = _local_player
+		if not _local_player.dead.is_connected(_on_local_player_dead):
+			_local_player.dead.connect(_on_local_player_dead)
 	if Global.current_level == null or not is_instance_valid(Global.current_level):
 		return
 	var player := _local_player
@@ -770,7 +869,47 @@ func _send_local_state(delta: float) -> void:
 		"c": player.character,
 		"v": 1 if player.visible else 0,
 	}
-	rpc("net_player_state", data)
+	_broadcast("net_player_state", [data])
+
+
+## Co-op death handling: mark the next respawn so we can place the player next
+## to the closest teammate instead of at the level start.
+func _on_local_player_dead() -> void:
+	_awaiting_respawn = true
+
+
+func _respawn_near_team() -> void:
+	for attempt in 8:
+		await get_tree().create_timer(0.5).timeout
+		if not is_playing_online():
+			return
+		if not is_instance_valid(_local_player):
+			_local_player = get_tree().get_first_node_in_group("Players") as Player
+		if not is_instance_valid(_local_player):
+			continue
+		var target := _nearest_puppet(_local_player.global_position)
+		if target == null:
+			continue
+		_local_player.global_position = target.global_position + Vector2(12, 0)
+		_local_player.reset_physics_interpolation()
+		_local_player.recenter_camera()
+		_local_player.camera_make_current()
+		_awaiting_respawn = false
+		return
+
+
+func _nearest_puppet(from: Vector2) -> Node2D:
+	var best: Node2D = null
+	var best_distance := INF
+	for id in _puppets.keys():
+		var puppet = _puppets[id]
+		if puppet == null or not is_instance_valid(puppet):
+			continue
+		var distance := from.distance_squared_to(puppet.global_position)
+		if distance < best_distance:
+			best_distance = distance
+			best = puppet
+	return best
 
 
 ## Identifies the concrete sub-room we are in (main room, bonus room, ...),
@@ -816,6 +955,7 @@ func _spawn_puppet(peer_id: int):
 	node.setup(peer_id, str(peers_info.get(peer_id, {}).get("name", "PLAYER")))
 	node.z_index = _local_player.z_index
 	_puppets[peer_id] = node
+	print("[NetPlay] puppet %d joined" % peer_id)
 	return node
 
 

@@ -4,7 +4,7 @@ signal button_clicked
 var button: Button
 var button_text: String
 
-func _init(text: String) -> void:
+func _init(text: String):
 	button_text = text
 	
 func _can_handle(object: Object) -> bool:

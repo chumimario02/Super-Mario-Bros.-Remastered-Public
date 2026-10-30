@@ -279,7 +279,30 @@ func get_config_path() -> String:
 			push_warning("Portable flag found but exe directory is not writeable. Falling back to user://")
 	return "user://"
 
+## Web builds: the landing page stores the uploaded ROM as base64 in
+## localStorage (reliable across reloads), so import it into user:// on boot.
+func import_web_rom() -> void:
+	if FileAccess.file_exists(ROM_PATH):
+		return
+	var encoded = JavaScriptBridge.eval("localStorage.getItem('smb_rom') || ''")
+	if encoded == null:
+		return
+	var text := str(encoded)
+	if text.length() < 32:
+		return
+	var bytes := Marshalls.base64_to_raw(text)
+	if bytes.size() < 16:
+		return
+	var file := FileAccess.open(ROM_PATH, FileAccess.WRITE)
+	if file != null:
+		file.store_buffer(bytes)
+		file.close()
+		print("[ROM] Imported ROM from browser storage (%d bytes)" % bytes.size())
+
+
 func check_for_rom() -> void:
+	if OS.has_feature("web"):
+		import_web_rom()
 	rom_path = ""
 	rom_assets_exist = false
 	if FileAccess.file_exists(ROM_PATH) == false:
